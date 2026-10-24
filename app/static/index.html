@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR-Drop | Ephemeral Streaming File-Transfer &amp; S3 Storage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                    },
+                    colors: {
+                        dark: {
+                            950: '#070a13',
+                            900: '#0c1222',
+                            850: '#111a30',
+                            800: '#18243e',
+                            700: '#223254',
+                        },
+                        brand: {
+                            indigo: '#6366f1',
+                            cyan: '#06b6d4',
+                            emerald: '#10b981',
+                            rose: '#f43f5e',
+                            amber: '#f59e0b',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar and glow animations */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #070a13; }
+        ::-webkit-scrollbar-thumb { background: #223254; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+
+        .glass-card {
+            background: rgba(12, 18, 34, 0.78);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glow-accent {
+            box-shadow: 0 0 50px -10px rgba(99, 102, 241, 0.25), 0 0 30px -5px rgba(6, 182, 212, 0.15);
+        }
+
+        .qr-wrapper svg {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+
+        @keyframes pulse-subtle {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.88); }
+        }
+        .live-dot {
+            animation: pulse-subtle 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-dark-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col selection:bg-brand-indigo selection:text-white">
+
+    <!-- Top Ambient Lights -->
+    <div class="fixed top-0 left-1/4 w-96 h-96 bg-brand-indigo/15 rounded-full blur-3xl pointer-events-none -z-10"></div>
+    <div class="fixed top-10 right-1/4 w-96 h-96 bg-brand-cyan/15 rounded-full blur-3xl pointer-events-none -z-10"></div>
+
+    <!-- Header Navigation & Live Metrics Bar -->
+    <header class="border-b border-slate-800/80 bg-dark-950/80 backdrop-blur-lg sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+            
+            <!-- Logo & Brand -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-indigo to-brand-cyan flex items-center justify-center font-mono font-extrabold text-white text-lg shadow-lg shadow-brand-indigo/30">
+                    QR
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">QR-Drop</span>
+                        <span class="px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase bg-brand-indigo/20 text-brand-indigo border border-brand-indigo/30 rounded-full">Engine v1.0</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                        <span class="w-2 h-2 rounded-full bg-brand-emerald live-dot"></span>
+                        <span id="header-lan-url" class="truncate max-w-[200px] sm:max-w-xs text-slate-300">Detecting LAN...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Metrics Badges -->
+            <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <div class="px-3 py-1.5 rounded-lg bg-dark-900 border border-slate-800 flex items-center gap-2">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Active Files</span>
+                    <span id="metric-active" class="font-mono text-sm font-bold text-white">0</span>
+                </div>
+                <div class="px-3 py-1.5 rounded-lg bg-dark-900 border border-slate-800 flex items-center gap-2">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Storage Used</span>
+                    <span id="metric-storage" class="font-mono text-sm font-bold text-brand-cyan">0 B</span>
+                </div>
+                <div class="px-3 py-1.5 rounded-lg bg-dark-900 border border-slate-800 flex items-center gap-2">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Purged by Janitor</span>
+                    <span id="metric-purged" class="font-mono text-sm font-bold text-brand-emerald">0</span>
+                </div>
+                <a href="/docs" target="_blank" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-lg transition border border-slate-700">
+                    <span>API Docs</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                </a>
+            </div>
+
+        </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main class="flex-1 max-w-4xl w-full mx-auto px-4 py-8 flex flex-col">
+        
+        <!-- Tab Navigation Switcher -->
+        <div class="flex justify-center mb-6">
+            <nav class="inline-flex p-1.5 rounded-2xl bg-dark-900/90 border border-slate-800/90 shadow-xl gap-1">
+                <button id="nav-btn-upload" onclick="switchTab('upload')" class="tab-btn px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 bg-gradient-to-r from-brand-indigo to-indigo-600 text-white shadow-md shadow-brand-indigo/30">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <span>Drop a File</span>
+                </button>
+                <button id="nav-btn-receive" onclick="switchTab('receive')" class="tab-btn px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z"></path></svg>
+                    <span>Receive by PIN</span>
+                </button>
+                <button id="nav-btn-cli" onclick="switchTab('cli')" class="tab-btn px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    <span>CLI Quickstart</span>
+                </button>
+            </nav>
+        </div>
+
+        <!-- TAB 1: DROP A FILE (Upload) -->
+        <section id="tab-upload" class="tab-content transition-opacity duration-200">
+            <div class="glass-card glow-accent rounded-3xl p-6 sm:p-8">
+                
+                <div class="text-center mb-6">
+                    <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2">Ephemeral File Transfer</h2>
+                    <p class="text-slate-400 text-sm max-w-lg mx-auto">Non-buffering zero-RAM streaming direct to MinIO S3. Your file auto-purges after expiration or maximum downloads.</p>
+                </div>
+
+                <!-- Drag & Drop Zone -->
+                <input type="file" id="file-uploader" class="hidden">
+                <div id="drop-area" onclick="document.getElementById('file-uploader').click()" 
+                     class="border-2 border-dashed border-slate-700 hover:border-brand-indigo/80 bg-dark-900/60 hover:bg-brand-indigo/5 rounded-2xl p-8 sm:p-10 text-center cursor-pointer transition-all duration-200 group relative overflow-hidden">
+                    
+                    <div class="flex flex-col items-center justify-center pointer-events-none">
+                        <div class="w-16 h-16 rounded-2xl bg-brand-indigo/10 border border-brand-indigo/20 flex items-center justify-center text-brand-indigo group-hover:scale-110 transition-transform duration-200 mb-4 shadow-lg shadow-brand-indigo/10">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        </div>
+                        <p class="text-base font-semibold text-white mb-1" id="drop-main-text">Click to browse or drag &amp; drop a file</p>
+                        <p class="text-xs text-slate-400" id="drop-sub-text">Any file type &bull; Zero-RAM 5MB Multipart S3 Streaming</p>
+                    </div>
+
+                    <!-- Selected File State -->
+                    <div id="file-selected-badge" class="hidden mt-4 inline-flex items-center gap-3 px-4 py-2 bg-slate-800/90 border border-slate-700 rounded-xl">
+                        <span class="text-brand-cyan text-sm font-mono" id="selected-filename">filename.ext</span>
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 font-mono" id="selected-filesize">0 B</span>
+                        <button type="button" onclick="clearSelectedFile(event)" class="text-slate-400 hover:text-brand-rose p-1 transition" title="Remove file">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Controls: Max Downloads & Expiry -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
+                    
+                    <!-- Max Downloads Selection -->
+                    <div class="bg-dark-900/70 p-4 rounded-2xl border border-slate-800">
+                        <label class="block text-xs uppercase tracking-wider font-semibold text-slate-400 mb-2">Max Downloads</label>
+                        <div class="grid grid-cols-4 gap-2">
+                            <button type="button" onclick="setMaxDownloads(1)" id="btn-dl-1" class="dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">1</button>
+                            <button type="button" onclick="setMaxDownloads(3)" id="btn-dl-3" class="dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-brand-indigo bg-brand-indigo/20 text-white transition">3</button>
+                            <button type="button" onclick="setMaxDownloads(5)" id="btn-dl-5" class="dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">5</button>
+                            <button type="button" onclick="setMaxDownloads(10)" id="btn-dl-10" class="dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">10</button>
+                        </div>
+                        <input type="hidden" id="input-max-downloads" value="3">
+                    </div>
+
+                    <!-- Expiry Time Selection -->
+                    <div class="bg-dark-900/70 p-4 rounded-2xl border border-slate-800">
+                        <label class="block text-xs uppercase tracking-wider font-semibold text-slate-400 mb-2">Expiry Time</label>
+                        <div class="grid grid-cols-4 gap-2">
+                            <button type="button" onclick="setExpiry(5)" id="btn-exp-5" class="exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">5m</button>
+                            <button type="button" onclick="setExpiry(30)" id="btn-exp-30" class="exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">30m</button>
+                            <button type="button" onclick="setExpiry(60)" id="btn-exp-60" class="exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-brand-indigo bg-brand-indigo/20 text-white transition">1h</button>
+                            <button type="button" onclick="setExpiry(1440)" id="btn-exp-1440" class="exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition">24h</button>
+                        </div>
+                        <input type="hidden" id="input-expiry" value="60">
+                    </div>
+
+                </div>
+
+                <!-- Upload Action Button & Progress -->
+                <div class="space-y-4">
+                    <button id="btn-execute-upload" onclick="startStreamingUpload()" disabled
+                            class="w-full py-4 rounded-2xl font-bold text-white bg-gradient-to-r from-brand-indigo to-brand-cyan hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg shadow-brand-indigo/20 flex items-center justify-center gap-2">
+                        <span>Drop to Storage</span>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                    </button>
+
+                    <!-- Real-time Progress Bar -->
+                    <div id="upload-progress-container" class="hidden bg-dark-900 border border-slate-800 p-4 rounded-2xl space-y-2">
+                        <div class="flex justify-between text-xs font-mono text-slate-400">
+                            <span id="progress-status-text">Streaming to MinIO S3...</span>
+                            <span id="progress-percent" class="font-bold text-white">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                            <div id="progress-bar-fill" class="bg-gradient-to-r from-brand-indigo to-brand-cyan h-full w-0 transition-all duration-150"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transfer Card (Revealed upon successful upload) -->
+                <div id="transfer-card" class="hidden mt-8 pt-8 border-t border-slate-800/80 animate-fadeIn">
+                    
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-brand-emerald/15 text-brand-emerald border border-brand-emerald/30">
+                            <span class="w-1.5 h-1.5 rounded-full bg-brand-emerald"></span>
+                            Drop Live &amp; Ready
+                        </span>
+                        <span class="text-xs text-slate-400 font-mono" id="card-expiry-badge">Expires in 60m</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center bg-dark-900/90 border border-slate-800 p-6 rounded-2xl">
+                        
+                        <!-- High-Contrast SVG QR Code -->
+                        <div class="flex flex-col items-center">
+                            <div class="p-3 bg-white rounded-2xl shadow-xl w-44 h-44 flex items-center justify-center qr-wrapper">
+                                <div id="card-qr-svg" class="w-full h-full"></div>
+                            </div>
+                            <span class="text-[11px] text-slate-400 mt-2 font-mono flex items-center gap-1">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                                Scan with Phone Camera
+                            </span>
+                        </div>
+
+                        <!-- PIN & Key Transfer Details -->
+                        <div class="md:col-span-2 space-y-4">
+                            
+                            <!-- Giant 6-digit PIN with Copy -->
+                            <div>
+                                <span class="text-xs uppercase tracking-wider font-semibold text-slate-400">6-Digit PIN Code</span>
+                                <div class="flex items-center gap-3 mt-1">
+                                    <span id="card-pin-code" class="text-3xl sm:text-4xl font-mono font-extrabold tracking-widest text-white bg-dark-950 px-4 py-2 rounded-xl border border-slate-800">000000</span>
+                                    <button onclick="copyToClipboard('card-pin-code', this)" class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-semibold text-slate-200 transition border border-slate-700 flex items-center gap-1.5">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                                        <span>Copy PIN</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Direct Download Link -->
+                            <div>
+                                <span class="text-xs uppercase tracking-wider font-semibold text-slate-400">Download URL</span>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <input type="text" id="card-download-url" readonly class="w-full bg-dark-950 px-3 py-2 rounded-lg font-mono text-xs text-brand-cyan border border-slate-800 outline-none">
+                                    <button onclick="copyToClipboard('card-download-url', this)" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition">Copy</button>
+                                </div>
+                            </div>
+
+                            <!-- Metadata: Size & SHA-256 -->
+                            <div class="grid grid-cols-2 gap-2 text-xs pt-1">
+                                <div>
+                                    <span class="text-slate-500 block uppercase">File Name</span>
+                                    <span id="card-filename" class="font-mono text-slate-200 truncate block">name</span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block uppercase">Size</span>
+                                    <span id="card-filesize" class="font-mono text-slate-200 block">0 B</span>
+                                </div>
+                                <div class="col-span-2">
+                                    <span class="text-slate-500 block uppercase">SHA-256 Checksum</span>
+                                    <span id="card-sha256" class="font-mono text-[11px] text-slate-300 break-all block">hash</span>
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+        <!-- TAB 2: RECEIVE BY PIN (Download) -->
+        <section id="tab-receive" class="tab-content hidden transition-opacity duration-200">
+            <div class="glass-card glow-accent rounded-3xl p-6 sm:p-8 max-w-xl mx-auto">
+                
+                <div class="text-center mb-6">
+                    <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2">Claim by PIN</h2>
+                    <p class="text-slate-400 text-sm">Enter the 6-digit PIN code shared by the sender to preview and stream your download.</p>
+                </div>
+
+                <!-- PIN Input Box -->
+                <div class="space-y-4">
+                    <div class="flex justify-center">
+                        <input type="text" id="pin-input" maxlength="6" placeholder="000000"
+                               oninput="onPinInputChange(this.value)"
+                               class="w-64 text-center font-mono font-extrabold text-3xl sm:text-4xl tracking-widest px-4 py-3 bg-dark-900 border-2 border-slate-700 focus:border-brand-indigo rounded-2xl outline-none text-white transition placeholder-slate-600">
+                    </div>
+                    <div class="flex justify-center">
+                        <button onclick="queryPinManual()" class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-dark-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                            Inspect PIN
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Preview Result Card -->
+                <div id="pin-preview-card" class="hidden mt-6 bg-dark-900/90 border border-slate-800 p-6 rounded-2xl space-y-4 animate-fadeIn">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-3 truncate">
+                            <div class="w-10 h-10 rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 flex items-center justify-center text-brand-cyan">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            </div>
+                            <div class="truncate">
+                                <h3 id="prev-filename" class="font-bold text-white text-base truncate">file.ext</h3>
+                                <span id="prev-filesize" class="text-xs font-mono text-slate-400">0 B</span>
+                            </div>
+                        </div>
+                        <span id="prev-downloads-badge" class="px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-brand-indigo/20 text-brand-indigo border border-brand-indigo/30">
+                            3 left
+                        </span>
+                    </div>
+
+                    <div class="space-y-2 text-xs">
+                        <div class="flex justify-between py-1 border-b border-slate-800/50">
+                            <span class="text-slate-400">Content Type:</span>
+                            <span id="prev-mimetype" class="font-mono text-slate-200">application/octet-stream</span>
+                        </div>
+                        <div class="flex justify-between py-1 border-b border-slate-800/50">
+                            <span class="text-slate-400">Expires At:</span>
+                            <span id="prev-expiry" class="font-mono text-slate-200">-</span>
+                        </div>
+                        <div class="py-1">
+                            <span class="text-slate-400 block mb-0.5">SHA-256 Checksum:</span>
+                            <span id="prev-hash" class="font-mono text-[11px] text-slate-300 break-all block bg-dark-950 p-2 rounded-lg border border-slate-800/80">-</span>
+                        </div>
+                    </div>
+
+                    <a id="btn-trigger-download" href="#" class="block text-center w-full py-3.5 rounded-xl font-bold text-white bg-gradient-to-r from-brand-emerald to-teal-500 hover:opacity-95 transition shadow-lg shadow-brand-emerald/20">
+                        Download File
+                    </a>
+                </div>
+
+                <!-- Error Notification -->
+                <div id="pin-error-box" class="hidden mt-6 p-4 rounded-xl bg-brand-rose/10 border border-brand-rose/30 text-brand-rose text-xs font-medium text-center">
+                    Invalid PIN code or drop has expired.
+                </div>
+
+            </div>
+        </section>
+
+        <!-- TAB 3: CLI QUICKSTART -->
+        <section id="tab-cli" class="tab-content hidden transition-opacity duration-200">
+            <div class="glass-card glow-accent rounded-3xl p-6 sm:p-8">
+                
+                <div class="mb-6">
+                    <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2">CLI Zero-RAM Streaming</h2>
+                    <p class="text-slate-400 text-sm">Upload directly from your terminal using <code class="text-brand-cyan">curl -T</code>. QR-Drop will respond with a full ASCII box summary and a scannable terminal ASCII QR code.</p>
+                </div>
+
+                <div class="space-y-6">
+                    
+                    <!-- Command 1: Basic CLI Upload -->
+                    <div class="bg-dark-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Windows PowerShell &amp; Command Prompt</span>
+                            <button onclick="copySnippet('cmd-win-simple', this)" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition">Copy</button>
+                        </div>
+                        <pre id="cmd-win-simple" class="bg-dark-950 p-3 rounded-xl font-mono text-xs sm:text-sm text-brand-cyan overflow-x-auto whitespace-pre">curl.exe -T report.pdf <span class="lan-endpoint-url">http://localhost:8000</span>/report.pdf</pre>
+                    </div>
+
+                    <!-- Command 2: Linux / macOS curl -->
+                    <div class="bg-dark-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Linux / macOS Terminal</span>
+                            <button onclick="copySnippet('cmd-unix-simple', this)" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition">Copy</button>
+                        </div>
+                        <pre id="cmd-unix-simple" class="bg-dark-950 p-3 rounded-xl font-mono text-xs sm:text-sm text-brand-emerald overflow-x-auto whitespace-pre">curl -T archive.tar.gz <span class="lan-endpoint-url">http://localhost:8000</span>/archive.tar.gz</pre>
+                    </div>
+
+                    <!-- Command 3: Custom Expiry & Downloads -->
+                    <div class="bg-dark-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Burner Mode: 1 Download &bull; 10 Minutes</span>
+                            <button onclick="copySnippet('cmd-burner', this)" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition">Copy</button>
+                        </div>
+                        <pre id="cmd-burner" class="bg-dark-950 p-3 rounded-xl font-mono text-xs sm:text-sm text-brand-amber overflow-x-auto whitespace-pre">curl.exe -H "X-Max-Downloads: 1" -H "X-Expiry-Minutes: 10" -T secret.env <span class="lan-endpoint-url">http://localhost:8000</span>/secret.env</pre>
+                    </div>
+
+                    <!-- Command 4: Resumable Range Download -->
+                    <div class="bg-dark-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Download via CLI (HTTP Range Supported)</span>
+                            <button onclick="copySnippet('cmd-download', this)" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition">Copy</button>
+                        </div>
+                        <pre id="cmd-download" class="bg-dark-950 p-3 rounded-xl font-mono text-xs sm:text-sm text-slate-200 overflow-x-auto whitespace-pre">curl -C - -OJ <span class="lan-endpoint-url">http://localhost:8000</span>/d/&lt;PIN&gt;</pre>
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/80 py-6 text-center text-xs text-slate-400 font-mono">
+        QR-Drop Engine &bull; Non-buffering S3 Multipart Streaming &bull; PostgreSQL 16 Concurrency Lock &bull; Storage Janitor
+    </footer>
+
+    <!-- Interactive Client JavaScript -->
+    <script>
+        let currentBaseUrl = window.location.origin;
+        let selectedUploadFile = null;
+
+        // Fetch Live Metrics & Base URL
+        function refreshMetrics() {
+            fetch('/api/metrics')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('metric-active').textContent = data.active_files || 0;
+                    document.getElementById('metric-storage').textContent = data.storage_used_formatted || '0 B';
+                    document.getElementById('metric-purged').textContent = data.total_purged || 0;
+
+                    if (data.public_base_url) {
+                        currentBaseUrl = data.public_base_url;
+                        document.getElementById('header-lan-url').textContent = currentBaseUrl;
+                        document.querySelectorAll('.lan-endpoint-url').forEach(el => el.textContent = currentBaseUrl);
+                    }
+                })
+                .catch(() => {});
+        }
+        refreshMetrics();
+        setInterval(refreshMetrics, 15000);
+
+        // Tab Switching Logic
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.className = 'tab-btn px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50';
+            });
+
+            document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+            const activeBtn = document.getElementById(`nav-btn-${tabId}`);
+            activeBtn.className = 'tab-btn px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 bg-gradient-to-r from-brand-indigo to-indigo-600 text-white shadow-md shadow-brand-indigo/30';
+        }
+
+        // File Selection & Drag-and-Drop
+        const dropArea = document.getElementById('drop-area');
+        const fileUploader = document.getElementById('file-uploader');
+
+        ['dragenter', 'dragover'].forEach(name => {
+            dropArea.addEventListener(name, (e) => {
+                e.preventDefault();
+                dropArea.classList.add('border-brand-indigo', 'bg-brand-indigo/10');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(name => {
+            dropArea.addEventListener(name, (e) => {
+                e.preventDefault();
+                dropArea.classList.remove('border-brand-indigo', 'bg-brand-indigo/10');
+            });
+        });
+
+        dropArea.addEventListener('drop', (e) => {
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                applyFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileUploader.addEventListener('change', () => {
+            if (fileUploader.files && fileUploader.files.length > 0) {
+                applyFile(fileUploader.files[0]);
+            }
+        });
+
+        function applyFile(file) {
+            selectedUploadFile = file;
+            document.getElementById('selected-filename').textContent = file.name;
+            document.getElementById('selected-filesize').textContent = formatBytes(file.size);
+            document.getElementById('file-selected-badge').classList.remove('hidden');
+            document.getElementById('drop-main-text').textContent = 'File selected: Ready to stream';
+            document.getElementById('btn-execute-upload').disabled = false;
+        }
+
+        function clearSelectedFile(e) {
+            e.stopPropagation();
+            selectedUploadFile = null;
+            fileUploader.value = '';
+            document.getElementById('file-selected-badge').classList.add('hidden');
+            document.getElementById('drop-main-text').textContent = 'Click to browse or drag & drop a file';
+            document.getElementById('btn-execute-upload').disabled = true;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Option Setters
+        function setMaxDownloads(val) {
+            document.getElementById('input-max-downloads').value = val;
+            document.querySelectorAll('.dl-opt-btn').forEach(b => {
+                b.className = 'dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition';
+            });
+            document.getElementById(`btn-dl-${val}`).className = 'dl-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-brand-indigo bg-brand-indigo/20 text-white transition';
+        }
+
+        function setExpiry(mins) {
+            document.getElementById('input-expiry').value = mins;
+            document.querySelectorAll('.exp-opt-btn').forEach(b => {
+                b.className = 'exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-slate-700 bg-dark-800 text-slate-300 hover:border-brand-indigo transition';
+            });
+            document.getElementById(`btn-exp-${mins}`).className = 'exp-opt-btn py-2 text-xs font-mono font-bold rounded-lg border border-brand-indigo bg-brand-indigo/20 text-white transition';
+        }
+
+        // Streaming Upload via XMLHttpRequest (Real-time progress)
+        function startStreamingUpload() {
+            if (!selectedUploadFile) return;
+
+            const uploadBtn = document.getElementById('btn-execute-upload');
+            const progressBox = document.getElementById('upload-progress-container');
+            const progressFill = document.getElementById('progress-bar-fill');
+            const progressPercent = document.getElementById('progress-percent');
+            const progressStatus = document.getElementById('progress-status-text');
+
+            uploadBtn.disabled = true;
+            progressBox.classList.remove('hidden');
+            progressFill.style.width = '0%';
+            progressPercent.textContent = '0%';
+            progressStatus.textContent = 'Initiating S3 Multipart Pipeline...';
+
+            const formData = new FormData();
+            formData.append('file', selectedUploadFile);
+            formData.append('max_downloads', document.getElementById('input-max-downloads').value);
+            formData.append('expiry_minutes', document.getElementById('input-expiry').value);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload', true);
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressFill.style.width = `${percent}%`;
+                    progressPercent.textContent = `${percent}%`;
+                    progressStatus.textContent = `Streaming chunks (${formatBytes(e.loaded)} / ${formatBytes(e.total)})...`;
+                }
+            };
+
+            xhr.onload = () => {
+                uploadBtn.disabled = false;
+                if (xhr.status === 201) {
+                    const data = JSON.parse(xhr.responseText);
+                    progressStatus.textContent = 'Upload Completed & Verified!';
+                    progressFill.style.width = '100%';
+                    progressPercent.textContent = '100%';
+
+                    // Render Transfer Card
+                    renderTransferCard(data);
+                    refreshMetrics();
+                } else {
+                    alert('Upload failed: ' + xhr.statusText);
+                    progressBox.classList.add('hidden');
+                }
+            };
+
+            xhr.onerror = () => {
+                uploadBtn.disabled = false;
+                progressBox.classList.add('hidden');
+                alert('Network error while streaming to server.');
+            };
+
+            xhr.send(formData);
+        }
+
+        function renderTransferCard(data) {
+            const card = document.getElementById('transfer-card');
+            card.classList.remove('hidden');
+
+            document.getElementById('card-qr-svg').innerHTML = data.qr_code_svg;
+            document.getElementById('card-pin-code').textContent = data.pin;
+            document.getElementById('card-download-url').value = data.download_url;
+            document.getElementById('card-filename').textContent = data.original_name;
+            document.getElementById('card-filesize').textContent = formatBytes(data.file_size_bytes);
+            document.getElementById('card-sha256').textContent = data.sha256_hash;
+
+            const expiryDate = new Date(data.expires_at);
+            document.getElementById('card-expiry-badge').textContent = `Expires ${expiryDate.toLocaleTimeString()}`;
+
+            card.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Receive by PIN Logic
+        function onPinInputChange(val) {
+            val = val.replace(/[^0-9]/g, '');
+            document.getElementById('pin-input').value = val;
+            if (val.length === 6) {
+                fetchPinDetails(val);
+            } else {
+                document.getElementById('pin-preview-card').classList.add('hidden');
+                document.getElementById('pin-error-box').classList.add('hidden');
+            }
+        }
+
+        function queryPinManual() {
+            const val = document.getElementById('pin-input').value.trim();
+            if (val.length === 6) {
+                fetchPinDetails(val);
+            }
+        }
+
+        function fetchPinDetails(pin) {
+            const previewCard = document.getElementById('pin-preview-card');
+            const errorBox = document.getElementById('pin-error-box');
+
+            fetch(`/api/drop/${pin}`)
+                .then(r => {
+                    if (!r.ok) throw new Error(r.status === 410 ? 'Drop is expired or depleted' : 'Drop not found');
+                    return r.json();
+                })
+                .then(data => {
+                    errorBox.classList.add('hidden');
+                    previewCard.classList.remove('hidden');
+
+                    document.getElementById('prev-filename').textContent = data.original_name;
+                    document.getElementById('prev-filesize').textContent = formatBytes(data.file_size_bytes);
+                    document.getElementById('prev-mimetype').textContent = data.mime_type;
+                    document.getElementById('prev-downloads-badge').textContent = `${data.downloads_remaining} download(s) left`;
+                    document.getElementById('prev-expiry').textContent = new Date(data.expires_at).toLocaleString();
+                    document.getElementById('prev-hash').textContent = data.sha256_hash;
+
+                    const dlBtn = document.getElementById('btn-trigger-download');
+                    dlBtn.href = `/d/${pin}`;
+                })
+                .catch(err => {
+                    previewCard.classList.add('hidden');
+                    errorBox.textContent = err.message;
+                    errorBox.classList.remove('hidden');
+                });
+        }
+
+        // Copy Helpers
+        function copyToClipboard(elemId, btn) {
+            const el = document.getElementById(elemId);
+            const text = el.tagName === 'INPUT' ? el.value : el.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `<span class="text-brand-emerald">Copied!</span>`;
+                setTimeout(() => btn.innerHTML = originalText, 2000);
+            });
+        }
+
+        function copySnippet(elemId, btn) {
+            const text = document.getElementById(elemId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = originalText, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
