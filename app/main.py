@@ -145,6 +145,26 @@ def parse_range_header(range_header: str, total_size: int) -> Optional[Tuple[int
         return None
 
 
+def get_effective_base_url(request: Request) -> str:
+    """
+    Dynamically determines the public base URL based on incoming request headers
+    (accounting for reverse proxies like Render, Cloudflare, Caddy), falling back to settings.PUBLIC_BASE_URL.
+    """
+    forwarded_proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+
+    if forwarded_host and not forwarded_host.startswith("localhost") and not forwarded_host.startswith("127.0.0.1"):
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+
+    if settings.PUBLIC_BASE_URL and not settings.PUBLIC_BASE_URL.startswith("http://localhost") and not settings.PUBLIC_BASE_URL.startswith("http://127.0.0.1"):
+        return settings.PUBLIC_BASE_URL.rstrip("/")
+
+    if forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+
+    return settings.PUBLIC_BASE_URL.rstrip("/")
+
+
 @app.get("/", include_in_schema=False)
 async def root():
     """Serves the landing page or metadata summary."""
@@ -277,7 +297,8 @@ async def upload_multipart(
             detail="Failed to record drop metadata in database.",
         )
 
-    download_url = f"{settings.PUBLIC_BASE_URL}/d/{pin}"
+    base_url = get_effective_base_url(request)
+    download_url = f"{base_url}/d/{pin}"
     svg_qr = generate_svg_qr(download_url)
 
     return JSONResponse(
@@ -375,7 +396,8 @@ async def upload_cli_stream(filename: str, request: Request):
             detail="Failed to record drop metadata in database.",
         )
 
-    download_url = f"{settings.PUBLIC_BASE_URL}/d/{pin}"
+    base_url = get_effective_base_url(request)
+    download_url = f"{base_url}/d/{pin}"
 
     # 5. Dual Response: ASCII box + terminal ASCII QR code for CLI clients; JSON for other clients
     if is_cli_client(request):
