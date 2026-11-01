@@ -37,6 +37,7 @@ async def init_db_schema() -> None:
 
     CREATE INDEX IF NOT EXISTS idx_drops_pin_active ON drops(pin) WHERE status = 'ACTIVE';
     CREATE INDEX IF NOT EXISTS idx_drops_expires_at_active_depleted ON drops(expires_at) WHERE status IN ('ACTIVE', 'DEPLETED');
+    ALTER TABLE drops ENABLE ROW LEVEL SECURITY;
     """
     async with pool.acquire() as conn:
         await conn.execute(schema_sql)

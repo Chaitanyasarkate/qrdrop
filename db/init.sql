@@ -24,3 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_drops_pin_active ON drops (pin) WHERE status = 'A
 
 -- Partial index for background reaper service to purge expired or depleted drops efficiently
 CREATE INDEX IF NOT EXISTS idx_drops_expires_at_active_depleted ON drops (expires_at) WHERE status IN ('ACTIVE', 'DEPLETED');
+
+-- Enable Row Level Security (RLS) to protect against unauthenticated PostgREST exposure
+ALTER TABLE drops ENABLE ROW LEVEL SECURITY;
+
