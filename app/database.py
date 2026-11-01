@@ -51,6 +51,7 @@ async def init_db_pool() -> asyncpg.Pool:
         dsn=settings.database_dsn,
         min_size=settings.DATABASE_POOL_MIN_SIZE,
         max_size=settings.DATABASE_POOL_MAX_SIZE,
+        statement_cache_size=0,
     )
     logger.info("asyncpg connection pool successfully established.")
     await init_db_schema()
